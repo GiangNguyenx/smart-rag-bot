@@ -1,7 +1,11 @@
 streamlit
 langchain-groq
+langchain_classic
 langchain_experimental
+langchain-community
 pandas
-openpyxl
+matplotlib
+seaborn
 tabulate
 python-dotenv
+scikit-learn
