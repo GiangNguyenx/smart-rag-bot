@@ -5,65 +5,104 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 
-# 1. HÀM PHÂN CỤM (CLUSTERING)
-def analyze_clusters(df: pd.DataFrame, features: list, n_clusters=3):
-    """
-    Thực hiện K-Means Clustering và vẽ biểu đồ Scatter.
-    Args:
-        df: DataFrame chứa dữ liệu
-        features: List tên các cột dùng để phân cụm (VD: ['Age', 'Spending Score'])
-        n_clusters: Số lượng cụm (mặc định 3)
-    """
-    # Xử lý dữ liệu: Loại bỏ dòng trống
-    data = df[features].dropna()
-    
-    # Chạy thuật toán K-Means
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    df['Cluster'] = kmeans.fit_predict(data)
-    
-    # Vẽ biểu đồ
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x=features[0], y=features[1], hue='Cluster', palette='viridis', s=100)
-    plt.title(f'K-Means Clustering: {features[0]} vs {features[1]}')
-    plt.xlabel(features[0])
-    plt.ylabel(features[1])
-    plt.grid(True)
-    
-    return f"Đã phân thành {n_clusters} cụm thành công. Cột 'Cluster' đã được thêm vào dữ liệu."
+from langchain_core.tools import tool
 
-# 2. HÀM DỰ BÁO (FORECASTING)
-def predict_trend(df: pd.DataFrame, target_col: str, months_ahead=3):
+
+_df = None
+
+def set_dataframe(df: pd.DataFrame):
+    global _df
+    _df = df
+
+@tool
+def analyze_clusters(n_clusters: int = 3) -> str:
     """
-    Dự báo xu hướng tương lai bằng Linear Regression đơn giản.
+    Perform K-means clustering on numerical columns of the dataset.
+    
     Args:
-        df: DataFrame
-        target_col: Cột cần dự báo (VD: 'Sales')
-        months_ahead: Số tháng muốn dự báo thêm
+        n_clusters: Number of clusters to create (default: 3)
+    
+    Returns:
+        Analysis summary with cluster information
     """
-    # Giả sử dữ liệu theo dòng thời gian, tạo biến X là index
-    y = df[target_col].values
-    X = np.array(range(len(y))).reshape(-1, 1)
+    if _df is None:
+        return "Error: No dataframe loaded"
     
-    # Train Model
-    model = LinearRegression()
-    model.fit(X, y)
+    try:
+        # Select only numeric columns
+        numeric_cols = _df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) == 0:
+            return "No numeric columns found for clustering"
+        
+        # Prepare data
+        X = _df[numeric_cols].fillna(_df[numeric_cols].mean())
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Perform clustering
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        clusters = kmeans.fit_predict(X_scaled)
+        
+        # Add cluster labels to dataframe
+        _df['cluster'] = clusters
+        
+        # Generate summary
+        summary = f"✅ Clustering complete with {n_clusters} clusters\n\n"
+        summary += f"📊 Cluster distribution:\n{pd.Series(clusters).value_counts().sort_index()}\n\n"
+        summary += f"📈 Columns used: {', '.join(numeric_cols)}"
+        
+        return summary
     
-    # Dự báo tương lai
-    last_index = len(y)
-    future_X = np.array(range(last_index, last_index + months_ahead)).reshape(-1, 1)
-    predictions = model.predict(future_X)
+    except Exception as e:
+        return f"Error during clustering: {str(e)}"
+
+
+@tool
+def predict_trend(column: str, periods: int = 5) -> str:
+    """
+    Predict future values for a numeric column using simple linear regression.
     
-    # Vẽ biểu đồ nối dài
-    plt.figure(figsize=(10, 6))
-    # Vẽ dữ liệu cũ
-    plt.plot(range(len(y)), y, label='Thực tế', marker='o')
-    # Vẽ dự báo
-    plt.plot(range(last_index, last_index + months_ahead), predictions, label='Dự báo AI', linestyle='--', color='red', marker='x')
+    Args:
+        column: Name of the column to predict
+        periods: Number of future periods to predict (default: 5)
     
-    plt.title(f'Dự báo xu hướng {target_col} trong {months_ahead} kỳ tiếp theo')
-    plt.legend()
-    plt.grid(True)
+    Returns:
+        Prediction results as formatted string
+    """
+    if _df is None:
+        return "Error: No dataframe loaded"
     
-    results_str = ", ".join([f"{p:.2f}" for p in predictions])
-    return f"Dự báo cho {months_ahead} kỳ tới là: {results_str}"
+    try:
+        if column not in _df.columns:
+            return f"Column '{column}' not found. Available columns: {', '.join(_df.columns)}"
+        
+        if not pd.api.types.is_numeric_dtype(_df[column]):
+            return f"Column '{column}' is not numeric"
+        
+        # Simple linear trend
+        from sklearn.linear_model import LinearRegression
+        
+        y = _df[column].dropna().values
+        X = np.arange(len(y)).reshape(-1, 1)
+        
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        # Predict future
+        future_X = np.arange(len(y), len(y) + periods).reshape(-1, 1)
+        predictions = model.predict(future_X)
+        
+        result = f"📈 Trend prediction for '{column}':\n\n"
+        result += f"Current trend: {'📈 increasing' if model.coef_[0] > 0 else '📉 decreasing'}\n"
+        result += f"Slope: {model.coef_[0]:.4f}\n\n"
+        result += "Future predictions:\n"
+        for i, pred in enumerate(predictions, 1):
+            result += f"  Period +{i}: {pred:.2f}\n"
+        
+        return result
+    
+    except Exception as e:
+        return f"Error during prediction: {str(e)}"
